@@ -1,21 +1,12 @@
-#include <linux/init.h>          
-#include <linux/module.h>        
-#include <linux/kernel.h>        
+#include <linux/kernel.h>      
+#include <linux/syscalls.h>    
 #include <linux/sched.h>        
 #include <linux/sched/signal.h>  
-#include <linux/mm.h>         
-#include <linux/cred.h>         
-#include <linux/slab.h>         
-#include <linux/rcupdate.h>     
-#include <linux/uidgid.h>    
+#include <linux/mm.h>           
+#include <linux/cred.h>        
+#include <linux/uidgid.h>        
+#include <linux/rcupdate.h>      
 
-MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Filip");
-MODULE_DESCRIPTION("Kernel module: DFS process tree for given PID");
-
-static int pid = 1;
-module_param(pid, int, 0);
-MODULE_PARM_DESC(pid, "Root PID for the DFS process tree");
 
 static void dfs_proc_tree(struct task_struct *task, int level)
 {
@@ -24,19 +15,17 @@ static void dfs_proc_tree(struct task_struct *task, int level)
     int i;
     char indent[64];
 
-    //printing limit
+	//print limit
     if (level < 0)
         level = 0;
     if (level >= (int)sizeof(indent))
-        level = sizeof(indent) - 1;
+        level = (int)sizeof(indent) - 1;
 
-    //for printing
     for (i = 0; i < level; i++)
         indent[i] = ' ';
     indent[i] = '\0';
 
-    
-
+   
     int prio = task->prio;
     int nice = task_nice(task);
 
@@ -48,14 +37,13 @@ static void dfs_proc_tree(struct task_struct *task, int level)
     //memory
     unsigned long rss_kb = 0, virt_kb = 0;
     if (task->mm) {
-        rss_kb  = (get_mm_rss(task->mm) << PAGE_SHIFT) >> 10;  
+        rss_kb  = (get_mm_rss(task->mm) << PAGE_SHIFT) >> 10;
         virt_kb = (task->mm->total_vm  << PAGE_SHIFT) >> 10;
     }
 
-    //time of execution
+    //runtime in ms
     u64 runtime_ms = div_u64(task->se.sum_exec_runtime, 1000000);
 
-    //dmesg | tail -n 50
     printk(KERN_INFO
            "%scomm=%s pid=%d prio=%d nice=%d uid=%u rss=%lukB virt=%lukB runtime=%llums\n",
            indent,
@@ -68,30 +56,29 @@ static void dfs_proc_tree(struct task_struct *task, int level)
            virt_kb,
            runtime_ms);
 
- 
+    
     list_for_each(list, &task->children) {
         child = list_entry(list, struct task_struct, sibling);
-        dfs_proc_tree(child, level + 2);  
+        dfs_proc_tree(child, level + 2);    
     }
 }
 
 
-static int proctree_init(void)
+SYSCALL_DEFINE1(proctree, pid_t, pid)
 {
     struct task_struct *task;
 
-    printk(KERN_INFO "proctree_mod -> loaded, starting DFS from PID=%d\n", pid);
+    if (pid <= 0)
+        return -EINVAL;
 
-    //lock rcu
+  
     rcu_read_lock();
 
     task = pid_task(find_vpid(pid), PIDTYPE_PID);
     if (!task) {
-        printk(KERN_INFO "proctree_mod -> PID %d not found\n", pid);
         rcu_read_unlock();
         return -ESRCH;
     }
-
 
     dfs_proc_tree(task, 0);
 
@@ -100,25 +87,7 @@ static int proctree_init(void)
     return 0;
 }
 
-
-
-static void  proctree_exit(void)
-{
-    printk(KERN_INFO "proctree_mod: unloaded\n");
-}
-
-
-module_init(proctree_init);
-module_exit(proctree_exit);
-
-
 /*
-To run the program use the make command to build it first,
-then use sudo insmod <module name>.ko to load the module
-then sudo dmesg (with or without it's options) to see the kernel log buffer and the results
-then you can use sudo rmmod <module name> to remove the module from the modules loaded
-
-Also u can use lsmod to list all modules loaded
 
 
 */
